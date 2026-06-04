@@ -275,6 +275,20 @@ var (
 	//
 	// For any request, the request is failed with this error.
 	ErrClientClosed = errors.New("client closed")
+
+	// ErrFetchEOF is the error of a fetch partition that has been consumed
+	// up to the partition's high watermark. It is only ever returned if the
+	// client was created with the [KeepFetchEOF] option.
+	//
+	// This is informational rather than fatal: it signals that, for the
+	// moment, the partition has no more records to consume. It is reported as
+	// a fetch partition error (so it appears in EachError, Err, and Err0,
+	// mirroring how librdkafka surfaces RD_KAFKA_RESP_ERR__PARTITION_EOF) and
+	// should be filtered with errors.Is before treating fetch errors as
+	// problems. If the partition is later produced to, consuming resumes
+	// normally and a new ErrFetchEOF is reported once the new high watermark
+	// is reached.
+	ErrFetchEOF = errors.New("partition consumed up to the high watermark")
 )
 
 // ErrFirstReadEOF is returned for responses that immediately error with

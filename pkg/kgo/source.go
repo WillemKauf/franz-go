@@ -192,6 +192,13 @@ type cursorOffset struct {
 	// The current high watermark of the partition. Uninitialized (0) means
 	// we do not know the HWM, or there is no lag.
 	hwm int64
+
+	// eofEmittedHWM supports the KeepFetchEOF option. It is the high watermark
+	// at which we last reported ErrFetchEOF. We report EOF when the fetch
+	// position reaches the high watermark and we have not already reported at
+	// that high watermark; comparing against the watermark naturally re-arms
+	// the signal once new records advance it.
+	eofEmittedHWM int64
 }
 
 // use, for fetch requests, freezes a view of the cursorOffset.
@@ -1332,6 +1339,26 @@ func (s *source) handleReqResp(br *broker, req *fetchRequest, resp *kmsg.FetchRe
 						},
 					})
 				}
+			}
+
+			// If the user opted into end-of-partition signaling, attach
+			// ErrFetchEOF to the fetch that catches the partition up to its
+			// high watermark. We emit on the catching-up fetch itself (which
+			// also carries that fetch's records) rather than waiting for a
+			// later empty fetch, because once a partition is caught up an
+			// incremental fetch session stops returning it at all. Comparing
+			// against eofEmittedHWM reports EOF at most once per high watermark
+			// and re-arms automatically once new records advance it. The fetch
+			// position advances past records not returned to the user (control
+			// batches, aborted batches, compacted gaps), so EOF is reported
+			// even when the last offset before the high watermark is not a
+			// returned record.
+			if s.cl.cfg.keepFetchEOF && fp.Err == nil &&
+				partOffset.offset >= partOffset.hwm &&
+				partOffset.eofEmittedHWM != partOffset.hwm {
+				fp.Err = ErrFetchEOF
+				partOffset.eofEmittedHWM = partOffset.hwm
+				keep = true
 			}
 
 			if keep {

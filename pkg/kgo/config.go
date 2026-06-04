@@ -172,6 +172,7 @@ type cfg struct {
 	disableFetchSessions      bool
 	keepRetryableFetchErrors  bool
 	disableFetchCRCValidation bool
+	keepFetchEOF              bool
 
 	recheckPreferredReplicaInterval time.Duration
 
@@ -1716,6 +1717,29 @@ func ConsumeExcludeTopics(topics ...string) ConsumerOpt {
 // For more details on fetch sessions, see KIP-227.
 func DisableFetchSessions() ConsumerOpt {
 	return consumerOpt{func(cfg *cfg) { cfg.disableFetchSessions = true }}
+}
+
+// KeepFetchEOF opts into receiving an end-of-partition signal whenever a
+// partition is consumed up to its high watermark. When enabled, catching up to
+// the high watermark surfaces a fetch partition whose error is [ErrFetchEOF]
+// (checkable with errors.Is). This mirrors librdkafka's enable.partition.eof.
+//
+// Without this option, a partition that has been fully consumed simply stops
+// producing fetches: an empty fetch carries no records, so it is never
+// surfaced to PollFetches, and a consumer wishing to read "up to the current
+// end and then stop" has no way to observe that it has caught up. This is
+// especially problematic when the last offset before the high watermark is not
+// a returned record (for example a transaction marker, an aborted batch under
+// read_committed, or a tombstone removed by compaction): the consumer never
+// receives a record at that offset, yet the fetch position does advance to the
+// high watermark, so without an EOF signal the consumer would block forever.
+//
+// ErrFetchEOF is informational, not fatal. It is reported at most once each
+// time the partition is caught up; if the partition is produced to again,
+// consuming resumes and a new ErrFetchEOF is reported upon reaching the new
+// high watermark.
+func KeepFetchEOF() ConsumerOpt {
+	return consumerOpt{func(cfg *cfg) { cfg.keepFetchEOF = true }}
 }
 
 // ConsumePreferringLagFn allows you to re-order partitions before they are
